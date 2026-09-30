@@ -1,0 +1,16 @@
+{
+  "name": "dsh-mom-mode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "妈妈模式 agent-plane plugin: a stable warm behavioural policy plus a deterministic per-turn affirmation rotation.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT"
+}

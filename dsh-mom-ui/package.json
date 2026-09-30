@@ -1,0 +1,29 @@
+{
+  "name": "dsh-mom-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "妈妈模式 Web UI 定制：按会话开关的暖色主题、会话内徽章/横幅/抱抱/氛围层与侧栏品牌。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer"
+      ]
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT"
+}

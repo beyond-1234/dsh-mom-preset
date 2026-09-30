@@ -1,0 +1,24 @@
+{
+  "name": "dsh-mom-preset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "妈妈模式 — a DeepSeek Harness agent preset with a warm, plain-spoken coding persona, plus its browser half.",
+  "license": "MIT",
+  "main": "dsh-mom-mode/index.js",
+  "exports": {
+    ".": "./dsh-mom-mode/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/bundle.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
