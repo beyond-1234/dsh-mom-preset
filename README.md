@@ -14,31 +14,101 @@
 
 ## 安装
 
-这是一个**标准 bundle**：`package.json` 声明 `dsh.bundle.patch` → `cordis.patch.yml`。用 harness 自己的安装器装进 profile：
+这是一个**标准 bundle**：`package.json` 声明 `dsh.bundle.patch` → `cordis.patch.yml`。装它只有一件事要做：**把这个目录交给 harness 的安装器**。
+
+### 先确认三件事
+
+| 前置 | 怎么确认 | 不对会怎样 |
+|---|---|---|
+| DSH 是 **`0.2.x`** | 见下面「支持范围」 | 版本门会拒绝安装，或预设挂载失败 |
+| 你装的是**哪一个 profile** | Web/CLI → `web`；桌面应用 → `desktop` | 装错地方 = 在界面上看不到「妈妈模式」 |
+| harness 在运行，或 `dsh` 可用 | 有会话就用路线 A；只有终端就用路线 B | 两者都没有就先起 harness |
+
+> **`install_bundle` 也可以直接从 GitHub 装**（用 `github:` 规格），本地路径这条路则要先 clone，但**不要**在这台机器上跑 `pnpm install`：仓库没有依赖，而且 DSH 那个 peer 被 `autoInstallPeers: false` 挡着，否则会把 1.4 GB 的 harness 拖进 checkout。
+
+### 路线 A：会话里让 agent 装（最省事，Web 和桌面都适用）
+
+在任意会话里说一句，或直接用工具：
 
 ```
 plugin_manager  action: install_bundle   target: <这个仓库的绝对路径>
 ```
 
-也可以直接从 GitHub 装（`plugin_manager` 认 git 规格）：
+直接从 GitHub 装也一样（安装器认 git 规格）：
 
 ```
-plugin_manager  action: install_bundle   target: github:<owner>/<repo>
+plugin_manager  action: install_bundle   target: github:beyond-1234/dsh-mom-preset
 ```
 
-等价 CLI：`dsh plugin --profile <profile> add <路径>`。
+`target` 必须是**仓库根目录**（有 `package.json` 的那一层），不是 `dsh-mom-ui/`。
 
-**装完重启 host，然后刷新一次浏览器页面**，在新会话的选择器里选「妈妈模式」。
+### 路线 B：只有终端
 
-它会做两件事：`pnpm add <目录>`，再把这个包加进 profile 的 `dsh.profile.bundles`。没有自定义安装脚本。
+```bash
+dsh plugin --profile web add /绝对路径/to/dsh-mom-preset
+```
 
-> 本地目录装进来是**符号链接**，不是拷贝，所以 patch 和插件都是**原地读仓库**的：改完只重启，不用重装。
+`dsh` 不在 PATH 上时（harness 是 `npx` 起的）用 npx 形式，版本要和你的部署一致：
+
+```bash
+npx @deepseek-ai/dsh@0.2.0-rc.2 plugin --profile web add /绝对路径/to/dsh-mom-preset
+```
+
+⚠️ **桌面 profile 在这条路上是个例外。** CLI 对 `--profile desktop` **只跑 pnpm、不会**把包加进 `dsh.profile.bundles`，所以那条路要**两步**：先跑上面的 `add`，再手工把 `dsh-mom-preset` 追加到 `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` 末尾。桌面应用自己的「插件」页（走的是路线 A 那个装法）没有这个问题——**桌面端优先用它**。
+
+### 然后重启
+
+**重启 host**，再刷新一次浏览器页面，在新会话的选择器里选「妈妈模式」。
+
+`install_bundle` 做两件事：`pnpm add <目录>`，再把这个包加进 profile 的 `dsh.profile.bundles`。**没有自定义安装脚本。** 本地目录装进来是**符号链接**不是拷贝，所以 patch 和插件都**原地读仓库**——以后改源码只要重启，不用重装。
 
 **安装单元只有一个。** 仓库里是两个包——根包（bundle + agent 插件）和 `dsh-mom-ui`（浏览器半边）。后者保留自己的包名是**机制要求**，但它是根包的 workspace，不是第二个可安装单元。
 
+### 装完长什么样 / 怎么确认装上了
+
+profile 的 `package.json`（`~/.dsh/profiles/<名字>/`）会多出这两处——这是出问题时最该先看的地方：
+
+```jsonc
+{
+  "dependencies": {
+    "dsh-mom-preset": "link:/绝对路径/to/dsh-mom-preset"   // GitHub 装则是版本号
+  },
+  "dsh": { "profile": { "bundles": [
+    "@deepseek-ai/dsh-base",
+    "@deepseek-ai/dsh-web-app",
+    "dsh-mom-preset"          // ← 追加在末尾
+  ] } }
+}
+```
+
+还有 `node_modules/dsh-mom-preset` 应该是一个**符号链接**指回你的仓库。
+
+三条自检：
+
+```bash
+# 1) 包装上了，而且是符号链接
+ls -l ~/.dsh/profiles/web/node_modules/dsh-mom-preset
+
+# 2) patch 是原地读你的仓库（两条路径应指向同一个文件）
+realpath ~/.dsh/profiles/web/node_modules/dsh-mom-preset/cordis.patch.yml
+
+# 3) 重启 host 之后，背景人物的路由在发货
+curl -sI http://127.0.0.1:<端口>/mom/art.png    # 期待 200 + content-type: image/png
+```
+
+三条都正常但选择器里还是没「妈妈模式」→ 多半是**没重启 host**。
+
+### 卸载
+
+```
+plugin_manager  action: remove_bundle   target: dsh-mom-preset
+```
+
+或 CLI `dsh plugin --profile web remove dsh-mom-preset`。
+
 ### 支持范围
 
-需要 **DSH `0.2.x`**（`peerDependencies` 声明为 `^0.2.0-0`）。这不是装饰：预设的 composition 是内置 `standard` 预设的**快照**，里面的模块名必须是那个版本里真实存在的包；换到别的版本线，Loader 解析不出名字会让**整个预设挂载失败**，任何会话都选不中它。装在 `0.2.x` 上通过；装到 `0.3.0` 或更高会被**拒绝**，并告诉你怎么显式承担风险（`dsh plugin allow-version`）。
+需要 **DSH `0.2.x`**（`peerDependencies` 声明为 `^0.2.0-0`）。这不是装饰：预设的 composition 是内置 `standard` 预设的**快照**，里面的模块名必须是那个版本里真实存在的包；换到别的版本线，Loader 解析不出名字会让**整个预设挂载失败**，任何会话都选不中它。装在 `0.2.x` 上通过；装到 `0.3.0` 或更高会被**拒绝**，并告诉你怎么显式承担风险（`dsh plugin --profile web allow-version ...`）。
 
 **升级 DSH 之后预设不见了**：`node test/bundle.mjs` 会打印与内置 `standard` 的漂移报告（哪些行多了、少了、改了），照着把 `cordis.patch.yml` 重新对齐即可。这一步不会自动发生——快照是故意的。
 
