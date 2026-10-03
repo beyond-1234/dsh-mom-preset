@@ -1,13 +1,22 @@
 name: CI
 
 on:
+  # `main` gets a run on every push (the tag/`git archive` path has to stay
+  # green), and pull requests get one too. Any OTHER branch is deliberately left
+  # alone: a topic branch is already covered by its pull request, and running
+  # both means every push during review starts two full jobs — one of which the
+  # concurrency group below immediately cancels, which is what makes GitHub show
+  # a grey "cancelled" check on the commit.
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
+# A superseded run is cancelled rather than queued, so a fresh push does not wait
+# behind the run it replaced. Keyed per workflow and ref, so a pull request's run
+# never cancels the `main` run for the commit it was opened from.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
