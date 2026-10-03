@@ -22,8 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The harness refuses to install its native build scripts by default; these are
-  # the ones `@deepseek-ai/dsh` itself needs to run at all.
+  # The engine floor in `package.json` is `>=22.19.0`; `engines` is advisory, so
+  # the version is pinned here where it is actually enforced.
   PRIMARY_NODE_VERSION: '22'
 
 jobs:
@@ -55,6 +55,8 @@ jobs:
           mkdir -p "$HOME/harness"
           cd "$HOME/harness"
           printf '{"name":"ci-harness","private":true}\n' > package.json
+          # The harness has native build scripts; declining them is fine here
+          # because only its manifest and patch files are read, never its code.
           pnpm add @deepseek-ai/dsh@0.2.0-rc.2 --config.strict-dep-builds=false
           # The suite locates the harness by walking up from the `dsh` binary on
           # PATH. The CLI does not expose one, so provide the only thing that walk
