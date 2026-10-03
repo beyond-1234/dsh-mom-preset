@@ -25,23 +25,19 @@
 ## 目录
 
 ```
-dsh-mom-mode/          agent 面插件（零 import）
-  index.js             只注册行为准则那一段 prompt（约 80 行）
-dsh-mom-ui/            Web UI 插件（手写 bundle，没有构建步骤）
+mom-mode.js            agent 面插件（零 import），也是本包的根入口（exports["."]）
+dsh-mom-ui/            Web UI 插件（手写 bundle，没有构建步骤）——子包，但不是第二份交付物
   lib/index.js         host 半：一行空 apply（客户端插件必须作为 Loader entry 存在）
   lib/client.js        主题 + 6 个插槽界面（含内嵌的背景人物）
-package.json           bundle 声明：name + dsh.bundle.patch -> ./cordis.patch.yml
+package.json           bundle 声明：name + dsh.bundle.patch -> ./cordis.patch.yml；workspaces -> dsh-mom-ui
+pnpm-workspace.yaml    把 dsh-mom-ui 声明成 workspace：边界写明，但不给它第二条安装路径
 cordis.patch.yml       唯一的 patch：插入预设声明 + 客户端行（composition 就在里面）
 reply-style.md         回复风格控制表（改 agent 说话方式先看它）
-assets/                背景人物素材
-  mom-art.webp         处理好的成品（698×1536，164 KB）
-  mom-art.json         尺寸旁挂，给 embed-art 读（这样它就不用依赖图像库了）
-ds_mom.png             原图（素材真源；无 alpha 时由 prepare-art 抠掉底色）
-tools/prepare-art.mjs  抠底 → 裁剪 → 缩放 → 编码，`--inspect` 只看诊断
-tools/embed-art.mjs    把成品内嵌进 client.js（`--check` 校验是否过期）
-test/smoke.mjs         137 项：逻辑 + 语气词表守卫
-test/bundle.mjs        37 项：bundle 结构 + 名字解析（相对路径存在性、裸包名）
+ds_mom.png             **素材唯一一份**：host 半边按 /mom/art.png 直接发它，client 里没有任何图片字节
+test/smoke.mjs         159 项：逻辑 + 语气词表守卫 + 内联成品的几何契约
+test/bundle.mjs        45 项：bundle 结构 + 名字解析（相对路径存在性、裸包名）
                         + policy 是否随声明下发
+                        + 包边界契约（浏览器半边不得被独立安装/按包名引用）
                         + 与内置 standard 的漂移报告（只报不判）
 ```
 
@@ -154,39 +150,57 @@ test/bundle.mjs        37 项：bundle 结构 + 名字解析（相对路径存�
 
 ## 背景人物
 
-`ds_mom.png` 是妈妈版 DS 娘。要把它变成能用的背景，得解两件事。
+`ds_mom.png` 是妈妈版 DS 娘，也是这份素材**唯一的一份**——仓库里不再有任何派生物。要让它上屏，得解三件事：**发出去**、**渲染成对的比例**、**放在不挡字的地方**。
 
-**1. 先抠底，再裁剪 → 缩放 → 编码。** 源图有两种形态，工具按有没有 alpha 分道走：
+**1. 图必须自带 alpha。** 现在这张是（RGBA，1024×1536），作者抠好的。
 
-- **自带 alpha**（现在这张就是，1024×1536）→ 一个像素都不碰，直接裁剪缩放编码。作者已经抠好了，再抠一遍只会把她的轮廓啃掉。
-- **没有 alpha** → 先抠底。见过纯黑底（纯黑底 + 人物，占画布 88.4%）这类。
-
-抠底**不是**全局按颜色抠。人物自己身上就有 1000～3600 个近黑像素——线稿、深蓝的头发和裙子——全局阈值会把它们当背景，在她身上打出一片洞。真正用的是**从画布四边往里泛洪**：只有*从边界能走到*的近底色像素算背景，内部的暗部因为被身体围住、走不到，全部留下。
-
-**边缘要单独处理，否则会带底色边。** 压在底色上、跨在边界上的那些像素是被底色*压过*的（抗锯齿的必然结果）。直接给满 alpha，UI 在她背后刷什么色，都会露出一圈底色轮廓。所以 alpha 同时取两条：剪影做 2px 盒式模糊（抗锯齿），再叠一条按亮度爬升的斜坡（把过渡带收掉）。
-
-抠完会打出两行诊断——抠掉的占比、**被保住的近底色像素数**——数字不对就该怀疑了。
-
-> 纯白底最麻烦：亮度分不开浅色主体，只能靠**色度**，再加"先膨胀、后泛洪、再取交集"去跨过细发丝轮廓。纯黑底不需要色度，`max(通道) <= 20` 就够了。
+> ⚠️ **换成不带 alpha 的图，人物会带一整块背景色（通常是黑或白）出现在侧栏旁边。** 以前有一条抠底流水线（从四边泛洪、近黑判据 `max(通道) <= 20`、2px 剪影模糊 + 亮度斜坡收边，专门对付"纯黑底 + 人物"这种源图）——那条流水线连同工具一起删掉了，因为它的产物是一份**派生物**，而这份设计里派生物正是要被消掉的东西。所以抠底现在得在**你这边**做完再放进仓库。
 >
-> 还有一种更阴的：**烤进图里的棋盘格**。有人把透明图往白棋盘上一存就导出了，看着像透明，其实是画上去的——两种近白色调（241–246 / 253–255）交替，而人物的米色上衣只有 233，**中间只隔 6 级**。这种源图现在的 keyer 处理不了，会直接报错（它的判据是"底色"而非"黑"），要换就换一张真带 alpha 的。
+> 附带一个当年的实测数字，留着有用：**烤进图里的棋盘格**最难办——有人把透明图往白棋盘上一存就导出，看着像透明，其实是画上去的（两种近白色调 241–246 / 253–255 交替，而人物米色上衣只有 233，**只差 6 级**）。这种源图不要用。
 
-**不过裁剪阈值还是个真陷阱呢。** 抠图或者作者自己都可能拖出一条 alpha 1–15 的**极淡噪声尾巴**——现在这张就有：
+**2. 图由 host 半边当文件发出去,client 里一个字节都不留。**
 
+`ds_mom.png` 是这份素材的**唯一一份**。`dsh-mom-ui/lib/index.js`（这个包的 host 半边）用 `ctx.webServer.register({ kind: 'exact', path: '/mom/art.png', handler })` 把它发出去；`lib/client.js` 只留**一个路径**：
+
+```js
+const MOM_ART_PATH = '/mom/art.png'   // 没有 query、没有版本号
 ```
-按 alpha>0   裁剪 → 930×1536   ← 被噪声撑大了
-按 alpha>=16 裁剪 → 682×1524   ← 真实主体
-```
 
-这可不是好不好看的问题：宽高比要喂给组件的尺寸求解，**框被撑大，她画出来就只有应有的一半大**。所以 `ALPHA_FLOOR = 16` 把噪声忽略掉，而且诊断会把两个框都打出来——将来你换了带同样毛病的源图，能看见，而不是被悄悄坑掉。
+**换成现在这个形态，是因为要"换图自动生效"。** 这条要求连着两个决定:
 
-抠不动的源图会**直接报错**（既没有 alpha、边界也不是纯色底），而不是悄悄产出一个矩形。成品是 698×1536、164 KB WebP。`node tools/prepare-art.mjs --inspect` 只出诊断，不写文件。
+- **URL 不能带缓存令牌。** `?v=<hash>` 这种写法本身就是"图变了要改代码",那还是构建步骤。所以路径是裸的，**新鲜度由服务端负责**：响应头是 `cache-control: no-store, no-cache, must-revalidate, max-age=0`，而且**故意不发 `ETag`/`Last-Modified`**——给了校验器就会换来 304，而 304 意味着浏览器继续用旧的图。
+- **handler 每次请求都重新读盘**（不是启动时读一次）。所以：换掉 `ds_mom.png` → 刷新页面 → 就是新图。**不用重启 host、不用重装、不用跑任何工具。**
+
+> 这条路由**挂在 bundle 层（profile 层）**，不是挂在预设里。预设是**按会话**挂载的，浏览器完全可能开在一个 `standard` 会话上——那种时候图会 404。所以它在没有 mom 会话时也一直开着；内容是内容不敏感的（就一张图），代价只是多一条路由。
+
+**3. 为什么可以不裁了。** 之前那套要裁剪，是因为图片编码进 bundle 时**编码后的宽高比会喂给组件的尺寸求解**，而裁剪框的 aspect（0.454）和整幅画布（0.667）差很多，用错就把她画成 68% 大小。
+
+改成"host 发原图 + CSS 渲染"之后这条约束换了位置，而且**现在是自洽的**：
+
+- 组件建的那个盒子，本来就是**按图片自己的宽高比**算的（`byHeight = heightCap × W / H`，`height = width × H / W`）；
+- CSS 用的是 `background-size: contain`，所以图片**正好铺满**那个盒子，没有信箱边、没有二次缩放。
+
+于是几何变成：`W/H = 1024/1536 = 0.667`，设计宽 280 → `宽 280 × 高 420`。**和裁剪时代渲染出来的尺寸是同一个数**——因为 `ART_MAX_WIDTH` 约束的是"她"的宽度，而她在画布里的宽度占比（682/1024 = 0.666）和 `698/1024` 基本一样。所以除了画布自带的**透明边距**，视觉结果和裁剪版一致。
+
+> ⚠️ **换素材时唯一要注意的：保持画布的宽高比。** 图片尺寸**不参与构建**，只有 `lib/client.js` 顶部那两个常量声明画布是 `1024×1536`。换一张同比例（2:3 竖图）的图，什么都不用改；换成别的比例，盒子会按图片比例重算、而常量没跟上——所以要**同时改那两个常量**。它们**不在任何缓存路径上**（`lib/client.js` 走正常的模块 rev 机制），但改完要**刷新页面**。
+
+**代价，说准。** 图片不再进 bundle，所以 `client.js` 只有 45 KB；代价是那 1.6 MB 改成走一次 HTTP：
+
+| | 之前（内联） | 现在（走路由） |
+|---|---|---|
+| `client.js` | 2449 KB（gzip 1837 KB） | **45 KB** |
+| 图片 | 在其中 | 1.6 MB，`no-store` **每次都重新取** |
+
+`no-store` 是这条功能的代价，不是疏忽——它是"换图自动生效"能成立的**唯一**方式。要省这 1.6 MB 就得允许缓存，那也就回到了"换图要改版本号"。这两件事你只能选一个。
+
+**那两个工具没了。** `tools/prepare-art.mjs`、`tools/embed-art.mjs`、`tools/` 整个目录、以及 `assets/`（`mom-art.webp` + 旁挂 json）都删掉了:没有编码、没有裁剪、没有内联，也就没有需要跑的构建步骤；`ds_mom.png` 是唯一一份真相，第二份派生物没有了，漂移也就无从谈起。
+
 
 **2. 她该站在哪儿。** `shell.overlay` 这一层是 `z-index: 20`，而且在所有列之后渲染，所以**我没法把人物放到内容下面去**（那得改 DSH 自己的层）。那正确做法就不是铺满整屏盖住对话，而是放进**侧边栏和居中卡片之间那块空档**：
 
 - 位置是 `left = 侧边栏实测宽度`，贴底 → 正好"紧靠侧边栏"。
 - 尺寸解出来是 `空档 = (中列宽 − 860) / 2`，给她 `空档 + 24px` 的溢出；**溢出那部分由右侧渐变 mask 吃掉**，所以在卡片上永远不会留硬边。
-- 高度按宽高比反推、上限 78vh；**空档不够（<126px）就干脆不渲染**——被压扁、或者压住对话的人物，比没有更糟呀。
+- 高度按宽高比反推、上限 = 视口高度（也就是「正好触顶」）；**尺寸只有触顶才会变**，空档不管尺寸（下一节专门讲这个）。
 
 **透明度是安全网，不是装饰。** 上面那个 `860` 是 `--dsh-composer-card-max-width`，也就是 **composer 卡片**的宽度——消息列的宽度可没保证跟它一样，所以空档估算有可能偏乐观。因此：
 
@@ -195,16 +209,52 @@ test/bundle.mjs        37 项：bundle 结构 + 名字解析（相对路径存�
 | `ART_OPACITY` | `0.5` | 整体透明度，用来兜住"估算偏大"的后果 |
 | `ART_FADE_LEAD` | `90` | 在卡片边缘**之前** 90px 就开始淡出，重叠区到文字上时基本已经没了 |
 | `ART_BLEED` | `24` | 允许越过空档的最大距离（唯一可能盖到内容的部分） |
-| `ART_MAX_WIDTH` / `ART_MIN_WIDTH` | `420` / `150` | 尺寸上下限 |
-| `ART_MAX_HEIGHT_VH` | `78` | 高度上限（视口百分比） |
+| `ART_MAX_WIDTH` | `280` | 宽度上限（= 她的设计尺寸）。**高度上限就是它**：280 ÷ 0.667 = **420px** |
+| `ART_MIN_WIDTH` | `150` | **淡出下限**：空档再窄，透明度也只按 150/280 衰减，不会淡到看不见 |
+| `ART_MAX_HEIGHT_VH` | `100` | 高度上限 = 视口高度，即「正好触顶」。**不要改回百分比**，那会重新变成无脑缩放 |
 
 `ART_FADE_LEAD` 还顺手带来一个自适应：**空档宽的时候她整段实心，空档窄的时候，她恰好在最缺空间的地方自己变淡**——不用再写第二条规则了。
 
-拿 1600px 窗口实测（空档 240、她 264 宽、`solidTo=150`、`fadeTo=264`）：她最多只压到卡片边缘 24px，而那儿 alpha 已经降到 ~21% 了（再乘上 0.5 的整体透明度，约 10%），文字完全读得清。
+### 尺寸只跟"顶端"走（桌面端同理）
+
+**她的尺寸由高度决定，而高度只有一条约束：不能高过父级。** 她是 `bottom: 0` 贴底的，所以唯一可能撞到的地方就是**顶端**。于是：
+
+```
+宽高比 = MOM_ART_WIDTH / MOM_ART_HEIGHT = 1024 / 1536 = 0.667
+高度上限 = min(420（= ART_MAX_WIDTH ÷ 宽高比）, 视口高度（100vh，不是百分比)）
+她的宽度 = 高度上限 × 宽高比
+```
+
+**420px 就是她的最大高度**（画布 1024×1536，280 宽 → 420 高）。
+
+**视口比她高多少都先不动**——只要还装得下，她一直是 280×420。**触顶之后**才跟着窗口一起缩：
+
+| 视口高度 | 她的尺寸 | 状态 |
+|---|---|---|
+| 1200 / 1440 / 2000 | 280×420 | 满尺寸，底下留白 |
+| 420 | 280×420 | 正好触顶 |
+| 820（桌面默认） | 280×420 | 满尺寸，不触顶 |
+| 400 | 267×400 | 触顶，随窗口缩 |
+
+> ⚠️ 这里以前是 `ART_MAX_HEIGHT_VH = 78`，也就是**按视口比例缩**。问题在于"视口变矮了"和"她装不下了"这两件事它分不开，所以两种情况都会缩——**屏幕明明还有富余她也变小了**，这就是你说的"无脑的缩小"。改成 100 之后，比例上限只能在她真的触顶时生效。
+
+**空档只管一件事：她盖到卡片上多少，以及因此要暗多少。** 不再决定尺寸：
+
+| 中列宽 | 空档 | 她的尺寸 | 透明度 |
+|---|---|---|---|
+| 1020（桌面 1280 默认） | 80 | 280×420 | 0.27 |
+| 1200 | 170 | 280×420 | 0.35 |
+| 1350 | 245 | 280×420 | 0.48 |
+| 1372 | 256 | 280×420 | 0.5（正好让开卡片） |
+| 1400 及以上 | ≥256 | 280×420 | 0.5 |
+
+**代价是重叠，安全性得由 mask 兜住。** `shell.overlay` 是 `z-index: 20`，她画在对话**上面**、躲不到卡片后面去——这是唯一没法绕开的一条。所以淡出必须**在文字开始的位置就归零**：`fadeTo = 空档 + ART_BLEED`（那 24px 就是卡片自己的内边距）。实测各尺寸下**文字所在列的 alpha 都是 0.0%**，可读性没有被"不缩小"这件事花钱买掉。
+
+> 顺带记一笔：淡出**不能**拉满她整个 280px 那样做——试过，文字列会剩 ~18% 的 alpha。终点定在文字列，既守住可读性，又让她保持满尺寸（她画得宽，但读起来仍然停在卡片边缘）。
 
 几何从哪儿来呢？`PanelInfo` 只有 `activePanelId`，没有尺寸；frame 的 class 又是 CSS-module 的 hash。但 AppFrame 把 `grid-template-columns` 写在**行内**呀，所以读它的 computed 值就是权威来源——用 `MutationObserver`（侧栏折叠、拖拽都会重写行内样式）加上 `ResizeObserver` 和 window resize 保持同步。
 
-换素材的流程：换掉 `ds_mom.png` → `node tools/prepare-art.mjs` → `node tools/embed-art.mjs`。`embed-art --check` 会告诉你 bundle 里的图过期了没有。
+换素材的流程：**换掉 `ds_mom.png` 就完了**——刷新页面即可，没有工具要跑、没有东西要重建。唯一例外是新的图**宽高比不同**，那要同时改 `lib/client.js` 顶部那两个画布常量。
 
 ## 安装
 
@@ -212,16 +262,22 @@ test/bundle.mjs        37 项：bundle 结构 + 名字解析（相对路径存�
 用 harness 自己的安装器装进 profile 就行（在 Web UI 里让 agent 装，或直接调 `plugin_manager`）：
 
 ```
-plugin_manager  action: install_bundle   target: /Users/name/codes/mom_preset_dsh
+plugin_manager  action: install_bundle   target: <这个仓库的绝对路径>
 ```
+
+> 等价 CLI：`dsh plugin --profile <profile> add <这个仓库的绝对路径>`。
 
 它会做两件事：`pnpm add <这个目录>`，再把这个包加进 profile 的 `dsh.profile.bundles`。
 **没有自定义安装脚本了**——以前的 `install.sh` 已经删掉。
 
 > **为什么 pnpm 的 `link:` 很关键。** 本地目录装进来是**符号链接**（`dsh-mom-preset -> …/mom_preset_dsh`），
 > 不是拷贝。所以 patch 和两个插件都是**原地读仓库**的：改完只要重启 host，
-> 不用重装。这正是以前 `install.sh` 要费劲绕开的东西——它得把 `mom-mode.js` 拷到
+> 不用重装。这正是以前 `install.sh` 要费劲绕开的东西——它得把 agent 半边的插件文件拷到
 > `$DSH_HOME/.agent-presets/mom/`，再往 home patch 里写绝对路径。
+
+**安装单元只有一个。** 仓库里是**两个包**——根包（bundle + agent 插件）和 `dsh-mom-ui`
+（浏览器半边）。后者保留自己的包名是**机制要求**（见下面「两个名字」那节），但它是根包的
+workspace，**不是第二个可安装单元**：`install_bundle` 只指向这个仓库目录一次，两个半边永远同版本。
 
 **装完重启 host，然后刷新一次浏览器页面。**
 
@@ -235,20 +291,94 @@ plugin_manager  action: install_bundle   target: /Users/name/codes/mom_preset_ds
 第二条是实测出来的，不是推理出来的：写 `./dsh-mom-mode/index.js` 时 roster 直接把预设标成
 `broken: mom-mode (./dsh-mom-mode/index.js): never started`，因为它去 `<profile>/dsh-mom-mode/…`
 找了。裸包名会从 profile 的 `node_modules`（符号链接所在）解析，所以 agent 半边按**包名**引用。
-为了让它成立，本包的 `main` / `exports` 指向 `dsh-mom-mode/index.js`——也就是
+为了让它成立，本包的 `main` / `exports` 指向 **`mom-mode.js`**——也就是
 「一个包既是 profile 层、又是插件」，shipped 的 `@deepseek-ai/dsh-web-app` 正是这个形状。
+
+> 所以 agent 半边**不需要自己的包**：它没有包名，也没人按名字 import 它，只是这个包的入口文件。
+> 早先那个 `dsh-mom-mode/` 目录（连同一个 `"type": "module"` 的占位 manifest）因此删掉了——
+> 根包自己就是 ESM，那份 manifest 是多余的。现在的形状是**两个包**：根包（bundle + agent 插件）
+> 和 `dsh-mom-ui`（浏览器半边，只提供边界，不是第二份交付物）。
 
 **改源码之后呢**（都**不用**重装，只要重启）：
 
 | 改了什么 | 怎么生效 |
 |---|---|
 | `cordis.patch.yml`（语气、composition） | **重启 host** + 新开会话 |
-| `dsh-mom-mode/index.js` | **重启 host** |
+| `mom-mode.js` | **重启 host** |
 | `dsh-mom-ui/lib/client.js` | **重启 host** + 刷新页面（bundle 由 host 启动时读进图里） |
 
 **客户端半边仍然故意不声明 `dsh.bundle`。** 它只是个普通的 `dsh.client` 包，由 patch 里那一行按文件引入。
 两条 entry 解析出同一个包名的话，`dsh-client-modules` 的 `reconcilePackage` 会抛错 → fiber 失败 →
 `window.__DSH_BOOT__` 不注入，**整个 Web 客户端黑屏**，浏览器那边拦不住，因为 host 已经先死了。
+
+> ⚠️ **这就是 `dsh-mom-ui` 必须是一个独立包名的原因——但仅此而已。** 它跟根包一起写在
+> `pnpm-workspace.yaml`（和根 `package.json` 的 `workspaces`）里，是为了把这条边界**写明**，
+> 不是把它变成第二个可安装单元：它在 mom 会话之外**什么都不渲染**（门控读的是当前会话的
+> `agentPreset`），单独装上去就是一份死代码；而第二条安装路径本身就等于上面那条双 entry 错误。
+> `test/bundle.mjs` 现在有专门的契约段盯着它：不得声明 `dsh.bundle`、不得带 patch 文件、
+> 不得被任何 Loader 行或源码按**包名**引用、workspace 声明必须和目录同名。
+
+### 桌面端
+
+**代码不用改。** 桌面应用是同一份 Web 前端外面的一层 Electron 壳：`apps/desktop/src/main.ts` 对
+`app://app` 这个源直接把 `@deepseek-ai/dsh-web-frontend/dist` 端出去，其余请求转发给同一个 Host。
+所以客户端插件、插槽、`window.__ModuleLoader__`（由 `dsh-client-modules` 自己注入，跟 Web 应用无关）
+全都一样。
+
+两个容易误判的点：
+
+- **`"platform": "web"` 不是"只能在网页用"。** `dsh-client-modules` 只认这一个值
+  （`decl.platform !== 'web'` 就跳过），shipped 的客户端插件**全都**写 `web`，桌面端也不例外。
+- **桌面 profile 的 `pnpm-workspace.yaml` 没有 `cordis` / `schemastery` 的 `overrides`**，Web profile 有。
+  本插件两个 host 半边**一个包都不 import**（`dsh-mom-ui/lib/index.js` 是空 `apply`，`mom-mode.js` 同样无依赖），
+  所以那份 overrides 是给别人防"两份 cordis 实例"的，对我们没有意义。
+
+**要改的是安装位置：桌面有自己独立的 profile。**
+
+| profile | 给谁用 | 装了吗 |
+|---|---|---|
+| `~/.dsh/profiles/web` | Web / CLI | ✅ `link:` + 在 `dsh.profile.bundles` 里 |
+| `~/.dsh/profiles/desktop` | 桌面应用 | ✅ 同样两样 |
+| `<harness>/.dsh-build/home/…` | `pnpm dev:desktop` | ❌ `dev` 把 `DSH_HOME` 指到仓库里，是第三个 home |
+
+**别指望在 Web 会话里装到桌面去。** 插件管理器**明确不能改别的 profile**——它只能动启动器给它的那个。
+所以有两条路：
+
+1. **桌面应用自己的「插件」页**（走同一个管理器，最稳），或
+2. **CLI**：`dsh plugin --profile desktop add /Users/name/codes/mom_preset_dsh`
+   —— 注意这条**只跑 pnpm**，`dsh.profile.bundles` 还得另外加，两步。
+
+已经手动装好的桌面 profile 长这样（和 Web profile 完全一致，`link:` 是绝对路径，符号链接指回本仓库，
+所以改完照样**只重启、不重装**）：
+
+```jsonc
+// ~/.dsh/profiles/desktop/package.json
+"dependencies": { "dsh-mom-preset": "link:/Users/name/codes/mom_preset_dsh" },
+"dsh": { "profile": { "bundles": [
+  "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app",
+  "dsh-mom-preset"            // ← 追加到列表末尾
+] } }
+```
+
+追加到**末尾**是管理器自己的规矩：开 bundle 就是往列表尾部加，这会改变配置优先级。
+
+> ⚠️ 桌面 profile 必须**先启动过一次桌面应用**才会被创建；CLI 拒绝在不存在的 profile 上操作。
+> 另外装之前**完全退出应用**——包操作要拿 profile 写锁，并发写入会被挡。
+
+**装完的验证顺序**（重启应用，然后新开一个妈妈模式的会话）：
+
+| 看什么 | 期望 |
+|---|---|
+| 侧栏品牌 | 变成「妈妈模式」+ 💗，切到别的模式**变回官方标记**（这是 `single` 座位 shadows 出厂占用者，本插件自己渲染官方标记） |
+| 背景人物 | 贴在侧栏右侧、贴底，**最大 280×420**，只在触顶时随窗口缩小。默认 1280px 窗口下她是满尺寸、透明度 0.27（空档只有 80px，所以偏暗），**盖到卡片上的部分在文字列之前就淡到 0**（见上面「尺寸只跟顶端走」） |
+| 暖色主题 | 面板转暖粉/暖褐；深浅色都读过（每个 token 都给了两套） |
+| 输入框 placeholder | `想要妈妈做什么, / 调用指令, @ 文件或对话`；**新会话**（hero 变体）也是这句 |
+| 切到别的模式 | placeholder **复原**成 `发消息或创建任务, …`（hero 那句也复原） |
+| 思考中 | `❤ 妈妈在想，用时 3 秒`——标签和跑马灯装饰层都要对 |
+| 「设置 → 插件 → 妈妈模式装饰」开关 | 关掉后装饰全停 |
+
+**装饰开关是按 origin 存的**（`localStorage` 里 `dsh-mom-ui:decor`），Web 是 `localhost:3080`、桌面是
+`dsh-app://app`，所以**两个端各有一份开关状态**，互不影响。
 
 ## 验证
 
@@ -272,7 +402,7 @@ node test/bundle.mjs     # 37 项：bundle 结构、名字解析、policy、漂�
 
 ## 已知限制
 
-- **改任何一边都要重启 host**：`dsh-mom-mode/index.js` 是 Loader 按模块名 import 的 ESM（被缓存，也没人盯源码），预设和 UI 插件则都住在 `cordis.patch.yml` 里，而这个版本的 web bundle 没挂 host 侧 patch 热重载。
+- **改任何一边都要重启 host**：`mom-mode.js` 是 Loader 按模块名 import 的 ESM（被缓存，也没人盯源码），预设和 UI 插件则都住在 `cordis.patch.yml` 里，而这个版本的 web bundle 没挂 host 侧 patch 热重载。
 - **插件现在一个字都不往会话里插**，所以「注入消息形状不对 → 整轮失败」那类坑（`format v4 message requires a producer-owned source kind`）连同它的多发地一起没了。真要在别处造消息，记住 v4 **没有**通用的 `plugin` 兜底 kind（`MessageSourceMap` 原话："there is no shared catch-all `plugin` kind"），每个 producer 得用自己的名字（`tool-jobs`、`tool-goal` 都是这么写的）。当年踩的时候 `test/smoke.mjs` 正好断言了那种错写法，测试把 bug 钉住了——所以 `install.mjs` 现在会拿 harness 自己的 `assertV4RowAdmission` 验消息，而不是自己重写一遍校验。
 - UI 插件的代码本身对所有会话都可见——客户端平面没有按预设装配，这是固有限制。
 - 预设是 `standard` 的快照：升级 DSH 不会同步内置预设的改动。
@@ -280,4 +410,6 @@ node test/bundle.mjs     # 37 项：bundle 结构、名字解析、policy、漂�
 - `test/bundle.mjs` 里跟内置 `standard` 的漂移报告**只打印、不判失败**：这个预设本来就是快照，升级后跟新 `standard` 有出入是正常的；但漂移是上面那个坑的来源，所以它照样会响亮地打出来，照着改就行。
 - 仓库可以随便搬家：bundle 是符号链接安装的，patch 里的两个名字**都不是绝对路径**（客户端行是 patch 相对，agent 行是包名），所以换个目录只要重装一次 `install_bundle`。
 - `--dsh-composer-card-max-width` 才是真实存在的 token 名；写到不存在的变量名上只会悄悄地用兜底值（这个坑我自己踩过一次）。
+- **桌面端的代码与 Web 完全共用**（同一个前端 bundle、同一套插槽），所以这里列的每一个限制对桌面端同样成立，一条都不用改。唯一和桌面有关的是**安装位置**：它有自己的 profile，详见上面「桌面端」那节。
+- ⚠️ **桌面端还没在真机上验过。** 本机 `/Applications` 里没有装桌面应用，`dsh` 也不在 PATH 上，所以「装进 `~/.dsh/profiles/desktop`」这步是按管理器 `installBundle` 的等价做法手工做的（`pnpm add` + 追加 `dsh.profile.bundles`），**跑起来是什么样没有实测**。上面那张验证表就是等桌面能跑了以后逐条对用的。
 - `shell.overlay` 的飘落爱心默认关着，持续动画容易干扰阅读。
