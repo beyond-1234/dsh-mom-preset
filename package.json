@@ -24,9 +24,19 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "scripts": {
-    "test": "node test/smoke.mjs && node test/bundle.mjs"
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.2.0-0"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/bundle.mjs",
+    "test:noharness": "node test/smoke.mjs && node test/bundle.mjs --allow-missing-harness"
+  },
+  "packageManager": "pnpm@12.5.1",
   "engines": {
     "node": ">=22.19.0"
   }

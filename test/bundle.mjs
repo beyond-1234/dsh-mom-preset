@@ -154,8 +154,32 @@ for (const file of patchPaths) {
 section('bundle · the patch is a valid profile layer')
 // ════════════════════════════════════════════════════════════════════════════
 
+// The harness is REQUIRED by default. Every check in this section needs it: the
+// patch is parsed by the same js-yaml the host uses, and every module name is
+// resolved against the packages that are really installed. Those are the two
+// failures that have actually bitten this repository — an unresolvable row does
+// not degrade, it fails the whole preset, so no session can select it — and a
+// silent skip would report a green suite that never looked.
+//
+// Without the harness a contributor gets a warning whose numbers look like a
+// pass, which is worse than a red run: it happened while this file was being
+// written. So the default is to FAIL, and `--allow-missing-harness` is the
+// deliberate, greppable way to say "I know these did not run" (see the
+// `test:noharness` script). CI must never pass that flag.
 if (MODULES === undefined) {
-  console.log('  skip  harness not on PATH — parse and resolution checks skipped')
+  const allowed = process.argv.includes('--allow-missing-harness')
+  const detail = 'harness not found — looked for `dsh` on PATH and in ~/.npm/_npx'
+  if (allowed) {
+    console.log(`  skip  ${detail}`)
+    console.log('        SO THIS RUN DID NOT CHECK: patch parsing, that every module name resolves,')
+    console.log('        the policy payload, and drift against the shipped `standard` preset.')
+  } else {
+    failures += 1
+    console.log(`  FAIL  ${detail}`)
+    console.log('        Those checks are the point of this file; refusing to report a pass without them.')
+    console.log('        Install the harness (`npx @deepseek-ai/dsh --version`), or re-run with')
+    console.log('        --allow-missing-harness if you accept that they did not run.')
+  }
 } else {
   const patches = patchPaths.filter((file) => existsSync(file)).map((file) => loadYamlFile(MODULES, file))
   checkTruthy('every declared patch parses as a top-level row list', patches.length > 0 && patches.every(Array.isArray))

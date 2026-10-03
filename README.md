@@ -1,6 +1,50 @@
 # 妈妈模式 for DeepSeek Harness
 
+> **English, briefly.** A DeepSeek Harness **agent preset** with a warm, plain-spoken
+> persona, plus its browser half: warm palette, a badge, a Hug button, and a
+> background figure — all switched on **per session** by selecting the preset, so
+> every other session is untouched.
+>
+> ```
+> plugin_manager  action: install_bundle   target: <absolute path, or github:owner/repo>
+> ```
+> Then **restart the host** and refresh the browser page once. Select 「妈妈模式」/
+> "Mom mode" in the new-session picker.
+>
+> **Naming, because it is four words for one thing:** the preset id is `mom`, its
+> display name is 妈妈模式 (mom mode), the bundle package is `dsh-mom-preset`, and
+> the browser half is the `dsh-mom-ui` workspace inside it. One install unit.
+>
+> **What it changes in your UI:** the sidebar mark/wordmark, session badges, a Hug
+> action beside each reply, a settings row, the warm palette, two rewritten strings
+> (`深度求索中` → `❤ 妈妈在想`, and the composer placeholder), and the background figure.
+> The strings and the mark **shadow** shipped components, which is why the browser
+> half is gated per session and reversible. Requires DSH `0.2.x` (see 支持范围).
+>
+> **Verify it yourself:** `pnpm test` → 159 + 70 checks, no dependencies beyond
+> Node. It asserts the preset's composition, the policy text, the per-session
+> gating, the art route, and the shipped art's geometry.
+>
+> The rest of this file is Chinese, and it is the detailed one; `docs/` holds the
+> reply-style table and the historical UI audit.
+
 说白了就是 **一个 agent 预设 + 两个半边插件**。你选「妈妈模式」开会话呢，它就有妈妈人设、一段贯穿全程的行为准则（先接住人再处理事、别拿否定词开头、把失败说小），顺带一整套按会话开关的暖色 Web UI。别的会话呀，一点都不受影响。
+
+## 它到底改了你界面的什么（装之前先看这段）
+
+端上一句话:**它不止加东西，它还盖住了两个官方组件和两句官方文案。** 这身暖色是好事还是冒犯，取决于你想要什么，所以清单摆在这儿：
+
+| 改的东西 | 性质 | 范围 |
+|---|---|---|
+| 妈妈人设 + 一段行为准则 | **新增**（系统提示词里多一段） | 只在 mom 会话 |
+| 暖色配色（25 个 `--dsw-alias-*` token） | **覆盖**主题 token | 只在 mom 会话，退出即还原 |
+| 侧栏标记 + 字标 | **盖住**官方鲸鱼和字标（`priority: -1`） | 非 mom 会话显示官方原样 |
+| 会话徽章、「抱抱」按钮、设置行、空会话大心心 | **新增**（其中空会话那个座位 shipped 本来就是空的） | 只在 mom 会话 |
+| `深度求索中` → `❤ 妈妈在想` | **改已经渲染出来的文本**（没有正规接口，只能改 DOM） | 只在 mom 会话 |
+| 输入框 placeholder | 同上，三处载体一起改（可见文本 / `data-placeholder` / `aria-label`） | 只在 mom 会话，且只认出厂整句 |
+| 背景人物（妈妈版 DS 娘） | **新增**，一条 `GET /mom/art.png` 路由 + 覆盖层 | 只在 mom 会话，设置里可关 |
+
+最后两行是**没有正规接口**才退到 DOM 的，代价是:官方哪天改了那两句的字，改写就不再命中（那时它**什么都不会做**，不会改错）。这也是为什么它按会话门控、而且离开 mom 会话要能**改回去**。
 
 ## 为什么要做成预设 + 插件，而不是一个插件
 
@@ -18,7 +62,7 @@
 
 **第 2 层最后那段是道保险**，写的是「有件事妈妈不做：不拣好听的哄他」，真出岔子照样说明白。嗯，这条不能去——少了它呀，暖就退化成谄媚了，模型开始瞒报错误。
 
-> **曾经还有第三层：每轮塞一句轮换的"鼓励语"（「全肯定」那套），已经整个删掉了。** 它做的是：读用户原话做关键词匹配，按情绪挑一个短语池（烦躁→`妈妈加油`，道谢→`谢谢妈妈`），再用 FNV-1a 哈希按 (会话, 轮次) 确定性地挑一句，作为一条 user 消息追加进去。删掉的原因：句子是**罐头**的，会话一长就开始重复；而且模型会**照着学**那个腔调，把它变成自己的收尾（"我在这儿呢，你说。"）——那种回复什么问题都没回答。想知道当时长什么样，看 [`dsh-mom-ui-audit.md`](dsh-mom-ui-audit.md) 顶上的存档说明。
+> **曾经还有第三层：每轮塞一句轮换的"鼓励语"（「全肯定」那套），已经整个删掉了。** 它做的是：读用户原话做关键词匹配，按情绪挑一个短语池（烦躁→`妈妈加油`，道谢→`谢谢妈妈`），再用 FNV-1a 哈希按 (会话, 轮次) 确定性地挑一句，作为一条 user 消息追加进去。删掉的原因：句子是**罐头**的，会话一长就开始重复；而且模型会**照着学**那个腔调，把它变成自己的收尾（"我在这儿呢，你说。"）——那种回复什么问题都没回答。想知道当时长什么样，看 [`docs/ui-audit.md`](docs/ui-audit.md) 顶上的存档说明。
 >
 > 一起删掉的还有为它服务的一整套：情绪表、关键词分类器、FNV-1a 轮换、notice summary 的长度约束，以及**浏览器里那份为了预测"会插哪句"而存在的情绪表副本**（连带那条贴输入框的横幅）。现在这个插件只做一件事：注册那一段 prompt。
 
@@ -32,7 +76,9 @@ dsh-mom-ui/            Web UI 插件（手写 bundle，没有构建步骤）—�
 package.json           bundle 声明：name + dsh.bundle.patch -> ./cordis.patch.yml；workspaces -> dsh-mom-ui
 pnpm-workspace.yaml    把 dsh-mom-ui 声明成 workspace：边界写明，但不给它第二条安装路径
 cordis.patch.yml       唯一的 patch：插入预设声明 + 客户端行（composition 就在里面）
-reply-style.md         回复风格控制表（改 agent 说话方式先看它）
+docs/                  ① 回复风格控制表 ② UI 审计留档（历史，不是现行问题清单）
+  reply-style.md       改 agent 说话方式先看它
+  ui-audit.md          当初 UI 那一轮的审计证据，正文别当现状读
 ds_mom.png             **素材唯一一份**：host 半边按 /mom/art.png 直接发它，client 里没有任何图片字节
 test/smoke.mjs         159 项：逻辑 + 语气词表守卫 + 内联成品的几何契约
 test/bundle.mjs        45 项：bundle 结构 + 名字解析（相对路径存在性、裸包名）
@@ -100,17 +146,17 @@ test/bundle.mjs        45 项：bundle 结构 + 名字解析（相对路径存�
 
 写这段文字要注意哈：**它是给模型读的，会直接影响模型怎么说话。** 要用妈妈自己会说的话来写——常用语、具体例子——别写成"底线／绝不可以／必须"那种清单。清单式的口气会顺着提示词渗进回复里，把本来要温暖的东西写得更硬。`test/smoke.mjs` 里有一条专门拦这类词（`门控/闸/底线/绝不可以/禁止/必须/契约…`）。
 
-> **想让某个说法消失，就别把那个说法本身写进 `policy`。** policy 里只放**正面说法**（"问他有什么想做的"），被禁掉的原句留给 [`reply-style.md`](reply-style.md)——那张表模型读不到。已经踩过两次：`契约` 在禁用词表里，写进去 smoke 当场红；`说一声就行` 这类**求指示的收尾**则由 `SERVILE_VOCABULARY` 盯着。提示词里出现的每个例句都会反过来影响模型怎么说话，负面例句也一样。
+> **想让某个说法消失，就别把那个说法本身写进 `policy`。** policy 里只放**正面说法**（"问他有什么想做的"），被禁掉的原句留给 [`docs/reply-style.md`](docs/reply-style.md)——那张表模型读不到。已经踩过两次：`契约` 在禁用词表里，写进去 smoke 当场红；`说一声就行` 这类**求指示的收尾**则由 `SERVILE_VOCABULARY` 盯着。提示词里出现的每个例句都会反过来影响模型怎么说话，负面例句也一样。
 
-> **收尾不许把球推回去。** 三种坏写法是同一件事——求指示（"说一声就行"）、反问要不要做（"要我一起做掉吗"）、**以及无意义地反问要做什么**（"你现在想让我看点啥？"）。policy 现在写的是**动作**，不是例句："一件事说完就说完了，别在末尾再接一句把话头递回去的问句——那等于这轮什么都没答，他还得重新说一遍想干什么。写完把末尾那句删掉试试：这轮少没少东西？没少，那句就是多余的。"**唯一准许的问法是手上有几条真实的路、且只有他能定的那种**；"你想先弄哪块"不算——他本来就知道。对照表在 [`reply-style.md`](reply-style.md) §3.6。
+> **收尾不许把球推回去。** 三种坏写法是同一件事——求指示（"说一声就行"）、反问要不要做（"要我一起做掉吗"）、**以及无意义地反问要做什么**（"你现在想让我看点啥？"）。policy 现在写的是**动作**，不是例句："一件事说完就说完了，别在末尾再接一句把话头递回去的问句——那等于这轮什么都没答，他还得重新说一遍想干什么。写完把末尾那句删掉试试：这轮少没少东西？没少，那句就是多余的。"**唯一准许的问法是手上有几条真实的路、且只有他能定的那种**；"你想先弄哪块"不算——他本来就知道。对照表在 [`docs/reply-style.md`](docs/reply-style.md) §3.6。
 >
-> ⚠️ **这条改过两次，原因值得记。** 第一版把禁掉的框架写成例句，模型就把它当**黑名单**满足：`session-4416bf36` 的推理原话是「别用"要不要我……"结尾」，然后它换个说法把同一件事说了出来（"你就直接说想干啥吧"）。所以现在 policy 里**一个可引用的坏例句都没有**，只有动作描述和一个模型自己跑得了的判断。"讨指示"这类例句只留在 [`reply-style.md`](reply-style.md) 的表里——那张表模型读不到。
+> ⚠️ **这条改过两次，原因值得记。** 第一版把禁掉的框架写成例句，模型就把它当**黑名单**满足：`session-4416bf36` 的推理原话是「别用"要不要我……"结尾」，然后它换个说法把同一件事说了出来（"你就直接说想干啥吧"）。所以现在 policy 里**一个可引用的坏例句都没有**，只有动作描述和一个模型自己跑得了的判断。"讨指示"这类例句只留在 [`docs/reply-style.md`](docs/reply-style.md) 的表里——那张表模型读不到。
 
-> **也不许空转。** 没有明确目标、只是在等用户开口时，很容易冒出一句"你直接说，我先听着"——它回答了什么？没有。提出了什么？没有。只是拿一句话把这一轮填满了，**看着像陪着，其实什么都没给**。判断标准很土但很好用：**把这句话删掉，这轮回复还剩什么？** 什么都不剩，那它就是空转。policy 里写的是"实在没话可说，就说点实在的：刚查到什么、下一步打算怎么弄"。对照表在 [`reply-style.md`](reply-style.md) §3.7。
+> **也不许空转。** 没有明确目标、只是在等用户开口时，很容易冒出一句"你直接说，我先听着"——它回答了什么？没有。提出了什么？没有。只是拿一句话把这一轮填满了，**看着像陪着，其实什么都没给**。判断标准很土但很好用：**把这句话删掉，这轮回复还剩什么？** 什么都不剩，那它就是空转。policy 里写的是"实在没话可说，就说点实在的：刚查到什么、下一步打算怎么弄"。对照表在 [`docs/reply-style.md`](docs/reply-style.md) §3.7。
 >
 > 这条还顺带解决了一个老问题：以前每轮会注入一句旁白（"我在这儿呢，你说。"），模型天天看着就照着学。旁白整个删掉之后，这个腔调的来源没了。
 
-> **回复要"把话讲完整"，不许压成词组。** 这是**方向反过一次**的地方：上一版 policy 写的是「句子短一点」，`reply-style.md` 开篇也写着「短句、碎念」，结果回复长成一串光杆动词——「查源码、改文件、跑命令、看日志、盯风险」，看着利索，没一句是人话。现在要求反过来：单动词（"查"）和合成词（"验证""排查"）都**展开成整句**（"我替你看看"／"我实际跑一遍，看看结果对不对"）。对照表在 [`reply-style.md`](reply-style.md) §2.5。
+> **回复要"把话讲完整"，不许压成词组。** 这是**方向反过一次**的地方：上一版 policy 写的是「句子短一点」，`reply-style.md` 开篇也写着「短句、碎念」，结果回复长成一串光杆动词——「查源码、改文件、跑命令、看日志、盯风险」，看着利索，没一句是人话。现在要求反过来：单动词（"查"）和合成词（"验证""排查"）都**展开成整句**（"我替你看看"／"我实际跑一遍，看看结果对不对"）。对照表在 [`docs/reply-style.md`](docs/reply-style.md) §2.5。
 >
 > ℹ️ 曾经还加过一条「话多一点不碍事」，**已经撤回**：它和 §3.7 的「不许空转」互相拉扯，模型只能在"话多"和"别凑数"之间猜。现在留下的只有**关于用词**的要求，**长短不再规定**。
 
@@ -266,6 +312,23 @@ plugin_manager  action: install_bundle   target: <这个仓库的绝对路径>
 ```
 
 > 等价 CLI：`dsh plugin --profile <profile> add <这个仓库的绝对路径>`。
+
+**也可以直接从 GitHub 装**（`plugin_manager` 认 git 规格，而且 pnpm 从远端装出来是**真实目录**不是符号链接——路由读包内文件这条路我验证过）:
+
+```
+plugin_manager  action: install_bundle   target: github:<owner>/<repo>
+```
+
+### 支持范围（重要）
+
+`peerDependencies` 声明的是 **`@deepseek-ai/dsh: ^0.2.0-0`**，也就是**这个 0.2.x 线**。这不是装饰:
+
+- 预设的 composition 是内置 `standard` 预设的**手抄快照**，里面每个模块名都必须是那个版本里真实存在的包。换到别的线，有些名字不存在——而 Loader 解析不出名字**不是少个功能**，是**整个预设挂载失败**，roster 把它标成 `broken`，于是**任何会话都选不中它**。
+- 有了这个范围，host 的兼容性检查才生效（它读的就是 `peerDependencies`；没有这个字段它会**直接返回 undefined**，等于永不报警）。装在 `0.2.x` 上通过；装到 `0.3.0` 或更高会被**拒绝**并告诉你怎么显式承担风险（`dsh plugin allow-version`）。
+
+> ⚠️ **为什么写 `^0.2.0-0` 而不是 `^0.2.0`。** semver 的预发布规则下，`^0.2.0` **不接受** `0.2.0-rc.2` 这样的运行时版本——我实测过，那样写会让所有人都装不进去。加 `-0` 才能覆盖 `0.2.0-*` 预发布以及之后的 `0.2.0` 正式版。这种地方不能靠猜。
+
+**升级 DSH 之后如果预设不见了**：`node test/bundle.mjs` 会打印与内置 `standard` 的漂移报告（哪些行多了、少了、改了），照着把 `cordis.patch.yml` 重新对齐一遍就行。这一步**不会**自动发生——快照是故意的，因为自动跟随时上游一改就可能悄悄换掉它的行为。
 
 它会做两件事：`pnpm add <这个目录>`，再把这个包加进 profile 的 `dsh.profile.bundles`。
 **没有自定义安装脚本了**——以前的 `install.sh` 已经删掉。

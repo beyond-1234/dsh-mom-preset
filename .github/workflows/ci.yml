@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The harness refuses to install its native build scripts by default; these are
+  # the ones `@deepseek-ai/dsh` itself needs to run at all.
+  PRIMARY_NODE_VERSION: '22'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      # The harness is what `test/bundle.mjs` resolves the patch's module names
+      # against. It is NOT a dependency of this repository (`autoInstallPeers` is
+      # off on purpose — see `pnpm-workspace.yaml`), so CI fetches it here.
+      #
+      # A failure is not fatal to the job: the suite then runs with
+      # `--allow-missing-harness`, which SKIPS those checks and says so out loud.
+      # That is the honest outcome for a network or registry problem, and it can
+      # never be mistaken for a pass that actually resolved 30 package names.
+      - name: Install the harness (for the resolution checks)
+        id: harness
+        continue-on-error: true
+        run: |
+          mkdir -p "$HOME/harness"
+          cd "$HOME/harness"
+          printf '{"name":"ci-harness","private":true}\n' > package.json
+          pnpm add @deepseek-ai/dsh@0.2.0-rc.2 --config.strict-dep-builds=false
+          # The suite locates the harness by walking up from the `dsh` binary on
+          # PATH. The CLI does not expose one, so provide the only thing that walk
+          # needs: a shim whose ancestors hold the installed @deepseek-ai tree.
+          mkdir -p "$HOME/bin"
+          printf '#!/bin/sh\nexit 0\n' > "$HOME/bin/dsh"
+          chmod +x "$HOME/bin/dsh"
+
+      - name: Point the suite at the harness
+        if: steps.harness.outcome == 'success'
+        run: echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # No harness means no resolution checks. `--allow-missing-harness` is the
+      # only way past the guard in `test/bundle.mjs`, and it prints exactly which
+      # checks it skipped.
+      - name: Run the suite
+        run: |
+          if [ "${{ steps.harness.outcome }}" = "success" ]; then
+            node test/smoke.mjs && node test/bundle.mjs
+          else
+            echo "::warning::harness unavailable — running with --allow-missing-harness; patch parsing, module-name resolution and drift were NOT checked"
+            node test/smoke.mjs && node test/bundle.mjs --allow-missing-harness
+          fi

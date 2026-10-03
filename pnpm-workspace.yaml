@@ -16,3 +16,23 @@
 # the rest.
 packages:
   - dsh-mom-ui
+
+# The harness peer is declared for its VERSION GATE, not to be installed here.
+#
+# `@deepseek-ai/dsh` is what this preset is written against: its composition is a
+# snapshot of that release's shipped `standard` preset, so a row name that exists
+# in one line and not another fails the whole preset rather than degrading. The
+# peer range is how the host's compatibility check learns which line this targets
+# — without a `peerDependencies` entry it returns early and the range is never
+# consulted at all, which is why the range has to be declared even though nothing
+# here imports the package.
+#
+# pnpm 12 installs declared peers by default, and the harness is ~1.4 GB of
+# packages with native build scripts. Cloning this repository to read one preset
+# must not pull that, and `peerDependenciesMeta.optional` does NOT stop it. So the
+# auto-install is off, which keeps a checkout at a few files.
+#
+# Verified: with this set, `pnpm install` here stays empty, and installing this
+# package INTO a profile adds only `dsh-mom-preset` — the peer is not dragged into
+# anyone's profile either.
+autoInstallPeers: false
