@@ -1,0 +1,18 @@
+# The browser half is a WORKSPACE, not a second deliverable.
+#
+# `dsh-mom-ui/` has to keep its own package name: `@deepseek-ai/dsh-client-modules`
+# collects one active Loader source per package name that declares `dsh.client`,
+# and throws when a name resolves from more than one source. The bundle row
+# (`./dsh-mom-ui/lib/index.js`) and the preset's `mom-mode` row (the bundle's own
+# package name) are both live at once, so folding the browser half into the root
+# package would make both rows name one client package — the fiber would fail and
+# the whole Web client would go dark.
+#
+# What it must NOT become is an independently installed package: it renders
+# nothing outside a session whose `agentPreset` is `mom`, so a standalone install
+# would be dead weight, and a second install route would be exactly the extra
+# Loader entry above. Declaring it here (and in the root's `workspaces`) makes
+# the relationship explicit without adding a route; `test/bundle.mjs` enforces
+# the rest.
+packages:
+  - dsh-mom-ui

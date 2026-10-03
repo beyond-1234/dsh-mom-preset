@@ -1,5 +1,13 @@
 /**
- * dsh-mom-mode — the agent-plane half of 妈妈模式 (mom mode).
+ * mom-mode — the agent-plane half of 妈妈模式 (mom mode), and the bundle
+ * package's root entry (`exports["."]`).
+ *
+ * It sits at the REPOSITORY ROOT on purpose: the preset's `mom-mode` row names
+ * the bundle package itself (`dsh-mom-preset`) rather than a path, because a
+ * preset child does not inherit this patch's resolution base. That makes this
+ * file the package's entry, so it needs no package of its own — which is why
+ * the old `dsh-mom-mode/` directory (and its `"type": "module"` stub manifest,
+ * now redundant beside the root's) is gone.
  *
  * One job: register the behavioural policy as a stable system-prompt section
  * (`mom:policy`, default order 1, immediately after the deployment persona
@@ -24,10 +32,10 @@
  * third copy of the mood table that lived in the browser bundle purely so the
  * composer banner could predict the injected line.
  *
- * Zero runtime dependencies, deliberately. A preset may name this file by
- * absolute path, and Node's upward `node_modules` walk from an arbitrary
- * directory never reaches the harness's own packages, so nothing here may
- * import one.
+ * Zero runtime dependencies, deliberately. The Loader imports this file by the
+ * bundle's bare package name out of the PROFILE directory, and Node's upward
+ * `node_modules` walk from there reaches neither the repository nor the
+ * harness's own packages, so nothing here may import one.
  */
 
 /** Cordis plugin name. */
@@ -43,12 +51,13 @@ export const POLICY_SECTION = 'mom:policy'
  * Fallback behavioural policy, used only when the mounting row supplies no
  * `policy` config.
  *
- * The shipped `mom` preset DOES supply one — the full, tuned voice lives in
- * `presets/mom/agent.cordis.yml`, because that file is what the roster stamps
- * for a new generation: editing it reaches the next session after a host
- * restart, while editing this module would not (the Loader caches the module
- * and nothing watches plugin sources). Keep this fallback short and in the same
- * voice; it is a safety net, not the tuned text.
+ * The 妈妈 preset DOES supply one — the full, tuned voice lives in this
+ * bundle's `cordis.patch.yml`, on the `mom-mode` row's `config.policy`,
+ * because that declaration is what the roster stamps for a new generation:
+ * editing it reaches the next session after a host restart, while editing this
+ * module would also need one (the Loader caches the module and nothing watches
+ * plugin sources). Keep this fallback short and in the same voice; it is a
+ * safety net, not the tuned text.
  *
  * The last sentence is load-bearing: warmth without it degrades into flattery,
  * and a flattering agent hides errors.

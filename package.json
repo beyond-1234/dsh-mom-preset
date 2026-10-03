@@ -5,11 +5,20 @@
   "type": "module",
   "description": "妈妈模式 — a DeepSeek Harness agent preset with a warm, plain-spoken coding persona, plus its browser half.",
   "license": "MIT",
-  "main": "dsh-mom-mode/index.js",
+  "main": "./mom-mode.js",
   "exports": {
-    ".": "./dsh-mom-mode/index.js",
+    ".": "./mom-mode.js",
     "./package.json": "./package.json"
   },
+  "workspaces": [
+    "dsh-mom-ui"
+  ],
+  "files": [
+    "mom-mode.js",
+    "cordis.patch.yml",
+    "ds_mom.png",
+    "dsh-mom-ui/lib"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

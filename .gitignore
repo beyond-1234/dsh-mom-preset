@@ -1,2 +1,9 @@
 node_modules/
 .DS_Store
+# `pnpm install` at the repo root is OPTIONAL — it exists only so the workspace
+# graph is a real one (`tools/art-source.mjs` borrows `sharp` when it can find
+# it). It is not part of installing the bundle, and the lockfile it writes would
+# only record that scratch tooling, so it stays out of the repository.
+pnpm-lock.yaml
+# Scratch pack output (`npm pack`), never a deliverable.
+*.tgz

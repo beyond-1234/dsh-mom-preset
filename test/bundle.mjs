@@ -287,27 +287,118 @@ section('bundle · the two plugin halves are packages with the right faces')
   const ui = JSON.parse(readFileSync(join(ROOT, 'dsh-mom-ui/package.json'), 'utf8'))
   checkTruthy('dsh-mom-ui declares its browser half', ui.dsh?.client !== undefined)
   check('and declares no dsh.bundle of its own', ui.dsh?.bundle, undefined)
+  // It answers to `dsh.bundle`'s absence a second way: no patch file exists for
+  // it, so there is nothing an installer could pick up even by accident.
+  checkTruthy('and ships no patch file', !existsSync(join(ROOT, 'dsh-mom-ui/cordis.patch.yml')))
   const clientEntry = ui.exports?.['./client']
   const clientFile = typeof clientEntry === 'string' ? clientEntry : clientEntry?.default
   checkTruthy('and exports a ./client bundle', typeof clientFile === 'string')
   check('which exists on disk', existsSync(join(ROOT, 'dsh-mom-ui', clientFile)), true)
 
-  // The agent half is loaded as a bare file path by the preset. Its own
-  // package.json is what tells Node the file is ESM — without it Node guesses,
-  // warns (MODULE_TYPELESS_PACKAGE_JSON), and would refuse the file outright if
-  // any ancestor package.json said `"type": "commonjs"`.
-  // What makes `dsh-mom-preset` a legal preset child: the bundle package answers
-  // as a plugin. `@deepseek-ai/dsh-web-app` has exactly this shape — one package
-  // that is both a profile layer and a plugin.
+  // The agent half is now this package's own root entry: the preset names the
+  // BUNDLE package (`dsh-mom-preset`), because a preset child does not inherit
+  // this patch's resolution base — a relative path would land in the profile
+  // directory. What makes that legal is the bundle package answering as a
+  // plugin. `@deepseek-ai/dsh-web-app` has exactly this shape — one package that
+  // is both a profile layer and a plugin. The old `dsh-mom-mode/` directory is
+  // gone: it held the same file plus a `"type": "module"` stub manifest that
+  // this package's own `type` already provides.
   const selfEntry = typeof manifest.exports?.['.'] === 'string' ? manifest.exports['.'] : manifest.exports?.['.']?.default
   const selfMain = selfEntry ?? manifest.main
   checkTruthy('the bundle package answers as a plugin', typeof selfMain === 'string')
   check('whose entry exists on disk', existsSync(join(ROOT, selfMain)), true)
+  check('and is ESM by its own declaration', manifest.type, 'module')
+  checkTruthy('the agent half is not a package of its own', !existsSync(join(ROOT, 'dsh-mom-mode')))
+}
 
-  const agent = JSON.parse(readFileSync(join(ROOT, 'dsh-mom-mode/package.json'), 'utf8'))
-  check('dsh-mom-mode is explicit about being ESM', agent.type, 'module')
-  check('and declares no dsh.bundle either', agent.dsh?.bundle, undefined)
-  check('its main entry exists on disk', existsSync(join(ROOT, 'dsh-mom-mode', agent.main)), true)
+// ════════════════════════════════════════════════════════════════════════════
+section('bundle · the browser half is a boundary, not a second package')
+// ════════════════════════════════════════════════════════════════════════════
+
+{
+  // WHY A SEPARATE PACKAGE NAME AT ALL. `@deepseek-ai/dsh-client-modules` keeps
+  // one active Loader source per package name that declares `dsh.client`, and
+  // `reconcilePackage` throws the moment a name resolves from a second one:
+  //
+  //   client-modules: package <name> resolves from multiple active Loader
+  //   sources: …; remove one entry
+  //
+  // Two rows are live at the same time: the bundle row inserted by this patch
+  // (`./dsh-mom-ui/lib/index.js`) and the preset's `mom-mode` child (the bundle's
+  // own package name). Today that is safe because NEITHER resolves to a package
+  // declaring `dsh.client` — the browser half lives under its own name, which the
+  // Loader sees exactly once. Folding it into the root package would make both
+  // rows name one client package: the fiber would fail, `window.__DSH_BOOT__`
+  // would never be injected, and the entire Web client would go dark.
+  //
+  // So the name is load-bearing. What must NOT happen is that `dsh-mom-ui`
+  // becomes an independently installable or publishable unit: it renders nothing
+  // at all outside a session whose `agentPreset` is `mom`, so a standalone
+  // install is dead weight, and a second install route is precisely the extra
+  // Loader entry above.
+  const uiPkg = JSON.parse(readFileSync(join(ROOT, 'dsh-mom-ui/package.json'), 'utf8'))
+  const clientName = uiPkg.name
+  check('the browser half has a package name to answer to', typeof clientName, 'string')
+
+  const sourceFiles = (directory, out = []) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === '.git') continue
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) sourceFiles(path, out)
+      else if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) out.push(path)
+    }
+    return out
+  }
+  const relativePath = (path) => path.slice(ROOT.length + 1)
+  const codeFiles = sourceFiles(ROOT).filter((path) => !relativePath(path).startsWith('dsh-mom-ui/'))
+
+  // A code-level import of the browser half by package name is the second-source
+  // failure in its most literal form. Only code is scanned (never this suite's
+  // own diagnostic strings, never the patch's comments) and only the QUOTED
+  // specifier counts, so prose about the rule cannot trip it.
+  const importPattern = new RegExp(`(?:from|import|require)\\s*\\(?\\s*['"\`]${clientName.replaceAll('.', '\\.')}(?:/[^'"\`]*)?['"\`]`)
+  const imported = codeFiles.filter((path) => importPattern.test(readFileSync(path, 'utf8'))).map(relativePath)
+  check('nothing in the repository imports it by package name', imported.join(','), '')
+
+  // Neither may any Loader row in this patch name it: such a row would need the
+  // package to resolve from the profile directory, which is a second source.
+  if (MODULES !== undefined) {
+    const rows = patchPaths.filter((file) => existsSync(file))
+      .flatMap((file) => loadYamlFile(MODULES, file)).flatMap((layer) => layer?.insert ?? [])
+    const rowNames = []
+    walkRows(rows, (row) => { if (typeof row.name === 'string') rowNames.push(row.name) })
+    const named = rowNames.filter((name) => name === clientName || name.startsWith(`${clientName}/`))
+    check('and no Loader row names it by package name', named.join(','), '')
+  }
+
+  // The bundle's own entry map must not reach into the other package either:
+  // `exports["."]` is the agent half, and a subpath pointing at the browser half
+  // would hand Node the one route into it that skips the `dsh.client` contract.
+  const selfExports = manifest.exports ?? {}
+  const reaching = Object.entries(selfExports)
+    .filter(([, target]) => String(target).includes('dsh-mom-ui')).map(([key]) => key)
+  check('the bundle package exposes no route into the browser half', reaching.join(','), '')
+
+  // The relationship is declared as a WORKSPACE — explicit, but not a delivery
+  // route. pnpm records it in `pnpm-workspace.yaml`; `workspaces` in the root
+  // manifest names the same directory for readers. The two must not disagree.
+  const workspaceFile = join(ROOT, 'pnpm-workspace.yaml')
+  checkTruthy('a pnpm workspace file declares the boundary', existsSync(workspaceFile))
+  const declaredWorkspaces = Array.isArray(manifest.workspaces) ? manifest.workspaces : []
+  checkTruthy('the root manifest declares the browser half as a workspace',
+    declaredWorkspaces.includes('dsh-mom-ui'))
+  // Each declared workspace must exist as a directory that names itself: the row
+  // reaches the browser half by PATH (`./dsh-mom-ui/lib/index.js`), and
+  // `client-modules` owns that module by the nearest manifest whose `name`
+  // matches, so a renamed or nameless directory would silently reclassify it.
+  for (const workspace of declaredWorkspaces) {
+    const workspaceManifest = join(ROOT, workspace, 'package.json')
+    checkTruthy(`${workspace}/ is a directory with a manifest`, existsSync(workspaceManifest))
+    if (existsSync(workspaceManifest)) {
+      check(`and its manifest names the ${workspace} package`,
+        JSON.parse(readFileSync(workspaceManifest, 'utf8')).name, workspace)
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -320,7 +411,7 @@ section('bundle · the agent half injects nothing')
   // message once shipped a retired v3 source wrapper and failed every turn. The
   // plugin builds no messages now, which retires the failure mode entirely — the
   // strongest form of "the row is admitted" is having no row.
-  const modes = await import(pathToFileURL(join(ROOT, 'dsh-mom-mode/index.js')).href)
+  const modes = await import(pathToFileURL(join(ROOT, 'mom-mode.js')).href)
   const subscribed = []
   let registered = null
   modes.apply(
@@ -332,6 +423,81 @@ section('bundle · the agent half injects nothing')
   )
   check('the plugin subscribes to no agent events', subscribed.join(','), '')
   check('and registers exactly the policy section', registered?.name, 'mom:policy')
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+section('bundle · the art route both halves must agree on')
+// ════════════════════════════════════════════════════════════════════════════
+
+{
+  // The browser half has ONE way to reach the art: a URL served by this package's
+  // host half, because `dsh-client-modules` serves exactly one file per plugin and
+  // exposes no static-asset route. The path is therefore a cross-half contract —
+  // a typo on either side is a silently missing figure — and it is asserted here
+  // rather than trusted.
+  const ui = JSON.parse(readFileSync(join(ROOT, 'dsh-mom-ui/package.json'), 'utf8'))
+  const hostEntry = typeof ui.main === 'string' ? ui.main : undefined
+  checkTruthy('the browser half package declares a host entry', typeof hostEntry === 'string')
+  const host = await import(pathToFileURL(join(ROOT, 'dsh-mom-ui', hostEntry)).href)
+
+  checkTruthy('the host half registers a webserver route', host.inject?.includes('webServer'))
+  const route = host.ART_ROUTE
+  checkTruthy('and exports the path it owns', typeof route === 'string' && route.startsWith('/'))
+
+  const clientSource = readFileSync(join(ROOT, 'dsh-mom-ui/lib/client.js'), 'utf8')
+  const clientPath = /const MOM_ART_PATH = '([^']+)'/.exec(clientSource)?.[1]
+  check('the browser half asks for exactly that path', clientPath, route)
+  // A query string would be a token that must change when the image changes, and
+  // that is the build step this design removed. Freshness is `no-store`, below.
+  check('and asks for it with no cache-busting token', /[?#]/.test(clientPath ?? ''), false)
+
+  // Drive the handler against stubs: a real HTTP round trip would need a booted
+  // harness, and the two things worth pinning are the response headers and what
+  // each method/verb does.
+  const calls = []
+  const response = () => ({
+    status: undefined,
+    headers: undefined,
+    body: undefined,
+    writeHead(status, headers) { this.status = status; this.headers = headers },
+    end(body) { this.body = body; calls.push(this) },
+  })
+
+  const registration = []
+  host.apply({
+    logger: { warn: () => {} },
+    webServer: { register: (value) => { registration.push(value); return () => {} } },
+  })
+  check('applying the host half registers exactly one route', registration.length, 1)
+  check('as an exact match on the exported path', registration[0]?.path, route)
+  check('with kind exact', registration[0]?.kind, 'exact')
+
+  const handler = registration[0]?.handler
+  checkTruthy('and a handler', typeof handler === 'function')
+
+  // The freshness contract: without `no-store` a replaced `ds_mom.png` would be
+  // invisible until the browser cache expired, which is the whole feature.
+  for (const method of ['GET', 'HEAD']) {
+    const res = response()
+    await handler({ method }, res)
+    check(`${method} answers 200`, res.status, 200)
+    check(`${method} ships the source PNG`, res.headers['content-type'], 'image/png')
+    checkTruthy(`${method} refuses to be cached`, /no-store/.test(res.headers['cache-control'] ?? ''))
+    // A validator would invite a 304, and a 304 keeps whatever the browser drew.
+    check(`${method} carries no ETag`, res.headers.etag, undefined)
+    check(`${method} carries no Last-Modified`, res.headers['last-modified'], undefined)
+    checkTruthy(`${method} announces the byte length`,
+      Number(res.headers['content-length']) === readFileSync(join(ROOT, 'ds_mom.png')).byteLength)
+    if (method === 'HEAD') check('and HEAD sends no body', res.body, undefined)
+    else checkTruthy('while GET sends the bytes', Buffer.isBuffer(res.body) && res.body.byteLength > 0)
+  }
+
+  {
+    const res = response()
+    await handler({ method: 'POST' }, res)
+    check('any other verb is refused', res.status, 405)
+    check('with an Allow header', res.headers.allow, 'GET, HEAD')
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

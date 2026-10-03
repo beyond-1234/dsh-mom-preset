@@ -275,7 +275,7 @@
 |---|---|---|
 | `policy`（§0–§4 全部） | `cordis.patch.yml` | **重启 host** + 新开会话 |
 | `persona.prefix`（§0） | 同上 | 同上 |
-| 只想临时试一句 | `dsh-mom-mode/index.js` 的 `DEFAULT_POLICY` | ⚠️ 这是**兜底**，预设给了 `policy` 就用不到它 |
+| 只想临时试一句 | `mom-mode.js` 的 `DEFAULT_POLICY` | ⚠️ 这是**兜底**，预设给了 `policy` 就用不到它 |
 
 **推荐的改法**：只动 `cordis.patch.yml` 的 `policy` → 重启 host → 新开会话看效果。
 
@@ -284,7 +284,7 @@ echo '重启 host，新开一个会话选「妈妈模式」看看'
 ```
 
 > **为什么改完要重启**：patch 是**装进 profile 的 bundle**（本地目录装成符号链接，原地读仓库），
-> 但预设声明是在 host 启动时注册的，`dsh-mom-mode/index.js` 也是被 Loader 按模块名 import 的
+> 但预设声明是在 host 启动时注册的，`mom-mode.js` 也是被 Loader 按模块名 import 的
 > 缓存 ESM。改了这两样都靠重启生效，**不需要重装**。
 >
 > 安装只有一条路：`plugin_manager` `install_bundle`，指向这个仓库目录。它会 `pnpm add`

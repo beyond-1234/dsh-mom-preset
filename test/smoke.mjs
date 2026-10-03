@@ -5,7 +5,7 @@
  *
  * Covers the two halves separately, because they fail in different ways:
  *
- *   1. `dsh-mom-mode` (agent plane) — real ESM import. Asserts the plugin's shape
+ *   1. `mom-mode.js` (agent plane, the bundle's root entry) — real ESM import. Asserts the plugin's shape
  *      (one prompt section, no agent-event subscriptions) and that the policy
  *      text reaching the model is the tuned one, free of rulebook, servile and
  *      idle-closing vocabulary.
@@ -47,10 +47,10 @@ function section(title) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-section('dsh-mom-mode · plugin shape')
+section('mom-mode.js · plugin shape')
 // ════════════════════════════════════════════════════════════════════════════
 
-const mode = await import(join(ROOT, 'dsh-mom-mode/index.js'))
+const mode = await import(join(ROOT, 'mom-mode.js'))
 
 check('plugin name', mode.name, 'mom-mode')
 // `agents` was only needed for the removed `agent/pre-step` listener. The plugin
@@ -65,7 +65,7 @@ for (const gone of ['DEFAULT_MOODS', 'DEFAULT_AFFIRMATIONS', 'classifyMood', 'ph
 
 
 // ════════════════════════════════════════════════════════════════════════════
-section('dsh-mom-mode · behavioural policy')
+section('mom-mode.js · behavioural policy')
 // ════════════════════════════════════════════════════════════════════════════
 
 let section_ = null
@@ -236,6 +236,8 @@ section('dsh-mom-ui · bundle loading')
 // ════════════════════════════════════════════════════════════════════════════
 
 let bundle = null
+/** The shipped art frame, read from the embedded PNG's IHDR (see the backdrop section). */
+let artMeta = null
 const styleTags = []
 // The backdrop reads the frame's inline `grid-template-columns`, so the sandbox
 // has to stand in for that DOM read. `sandbox.__columns` is the single knob the
@@ -711,48 +713,72 @@ section('dsh-mom-ui · background figure')
   checkTruthy('its registration carries no locale (it renders no copy)',
     registrations.find((r) => r.options.id === 'mom-backdrop')?.options.locale === undefined)
 
-  // A data URI is the only way the art can reach the page: the module route serves
-  // `lib/client.js` and nothing else.
-  checkTruthy('the art is embedded as a webp data URI', /const MOM_ART = 'data:image\/webp;base64,[A-Za-z0-9+/=]{200,}'/.test(BUNDLE_SOURCE))
-  const artMeta = JSON.parse(readFileSync(join(ROOT, 'assets/mom-art.json'), 'utf8'))
-  check('the embedded width matches the prepared asset', Number(BUNDLE_SOURCE.match(/MOM_ART_WIDTH = (\d+)/)[1]), artMeta.width)
-  check('the embedded height matches the prepared asset', Number(BUNDLE_SOURCE.match(/MOM_ART_HEIGHT = (\d+)/)[1]), artMeta.height)
-  checkTruthy('the asset itself is present', existsSync(join(ROOT, 'assets/mom-art.webp')))
+  // The art is a FILE now, not bytes in this bundle. `lib/index.js` (this
+  // package's host half) serves `ds_mom.png` over HTTP, because
+  // `dsh-client-modules` serves exactly one file per plugin and exposes no
+  // static-asset route — a second file has no other way to reach the page.
+  const path = /const MOM_ART_PATH = '([^']+)'/.exec(BUNDLE_SOURCE)?.[1]
+  checkTruthy('the browser half points at an art URL', typeof path === 'string' && path.startsWith('/'))
+  // No query, no hash, no version: a cache-busting parameter would be a string
+  // that has to change when the image does, which is exactly the build step this
+  // design removed. Freshness is the host's job (`no-store`), not the URL's.
+  check('and the URL carries no cache-busting token', /[?#]/.test(path ?? ''), false)
+  checkTruthy('the browser half ships no inline copy of the art',
+    !/data:image\//.test(BUNDLE_SOURCE))
 
-  // The pipeline keys a flat field out only when the SOURCE lacks alpha, and never
-  // re-keys a source that already has it. Read the PNG IHDR colour type directly
-  // (offset 25: 2 = RGB, 4 = grey+alpha, 6 = RGBA) rather than pulling in an image
-  // library, and require the prepared asset to be an alpha-capable container so a
-  // regression to a flattened rectangle is caught here rather than on screen.
+  // The geometry checks further down solve her size from this frame.
+  {
+    const width = Number(BUNDLE_SOURCE.match(/MOM_ART_WIDTH = (\d+)/)[1])
+    const height = Number(BUNDLE_SOURCE.match(/MOM_ART_HEIGHT = (\d+)/)[1])
+    // The frame is the SOURCE CANVAS, not a crop: the backdrop box is built from
+    // her aspect ratio and `background-size: contain` fills it, so the canvas
+    // aspect is what the component must solve against. Asserting this range is
+    // what stops the crop from being reintroduced here by accident.
+    const aspect = width / height
+    checkTruthy(`the declared frame is a portrait canvas (aspect ${aspect.toFixed(3)})`,
+      aspect > 0.5 && aspect < 0.8)
+    artMeta = { width, height }
+  }
+
+  // The image is served UNCROPPED, so the rendering depends on the backdrop rule
+  // filling its box with the whole canvas. Without `contain` the source would be
+  // drawn at its intrinsic 1024px and only a corner would show; without
+  // `left bottom` she would not line up with the sidebar edge or the floor; a
+  // tiled canvas would repeat her across the frame.
+  {
+    const backdropRule = /\.dsh-mom-backdrop\.dsh-mom-backdrop\{([^}]*)\}/.exec(BUNDLE_SOURCE)?.[1] ?? ''
+    checkTruthy('the backdrop fills its box with the whole canvas (background-size:contain)',
+      backdropRule.includes('background-size:contain'))
+    checkTruthy('and anchors to the sidebar edge and the floor',
+      backdropRule.includes('background-position:left bottom'))
+    checkTruthy('and never tiles the canvas', backdropRule.includes('background-repeat:no-repeat'))
+  }
+
+  // The source contract. `ds_mom.png` is the only copy of the art: the prepared
+  // WebP, its sidecar JSON, and the tool that produced them are gone, because a
+  // second copy is how the two drift apart.
   {
     const png = readFileSync(join(ROOT, 'ds_mom.png'))
     checkTruthy('the source is a PNG', png.subarray(1, 4).toString('latin1') === 'PNG')
     const colorType = png[25]
     checkTruthy(
-      `the source is a shape prepare-art accepts (colour type ${String(colorType)}: 2 RGB, or 4/6 with alpha)`,
+      `the source carries alpha (colour type ${String(colorType)}: 2 RGB, or 4/6 with alpha)`,
       colorType === 2 || colorType === 4 || colorType === 6,
     )
-
-    const webp = readFileSync(join(ROOT, 'assets/mom-art.webp'))
-    const chunk = webp.subarray(12, 16).toString('latin1')
-    checkTruthy(`the prepared art is a WebP (${chunk})`, webp.subarray(0, 4).toString('latin1') === 'RIFF' && webp.subarray(8, 12).toString('latin1') === 'WEBP')
-    if (chunk === 'VP8X') {
-      // Extended format: bit 0x10 is "has alpha", and it is the only lossy
-      // WebP encoding that can carry one.
-      checkTruthy('the extended WebP declares an alpha channel', (webp[20] & 0x10) !== 0)
-    } else {
-      check('the WebP is lossless, which always carries alpha', chunk, 'VP8L')
+    // What the browser receives must be the file the host reads, at the size the
+    // browser half declares — otherwise she is solved against numbers the pixels
+    // do not have. Both halves were checked above; this ties them together.
+    check('the declared frame is the source PNG\'s own size',
+      `${String(artMeta.width)}x${String(artMeta.height)}`,
+      `${String(png.readUInt32BE(16))}x${String(png.readUInt32BE(20))}`)
+    for (const gone of ['assets/mom-art.webp', 'assets/mom-art.json', 'tools', 'tools/prepare-art.mjs']) {
+      check(`the abandoned derived asset is not back (${gone})`, existsSync(join(ROOT, gone)), false)
     }
   }
 
-  // Regression guard with teeth: the frame must be the trimmed subject. The art is
-  // shown at a fixed height and its aspect feeds the component's size solve, so a
-  // frame that still holds most of the canvas (the source is 1536×864, aspect 1.78)
-  // or one inflated by a keyed edge trail would draw her at the wrong size.
-  {
-    const aspect = artMeta.width / artMeta.height
-    checkTruthy(`the trimmed frame is the subject, not the canvas (aspect ${aspect.toFixed(3)})`, aspect > 0.3 && aspect < 0.6)
-  }
+  // (The "frame must be the trimmed subject, not the canvas" guard now lives above,
+  // asserted against the EMBEDDED PNG's own IHDR. It used to read a sidecar JSON
+  // here, which is exactly the second copy of the truth this change removed.)
 
   /** Render the backdrop with a given frame geometry. */
   const renderBackdrop = (preset, columns, viewportHeight = 1000) => {
@@ -771,51 +797,158 @@ section('dsh-mom-ui · background figure')
     return match === null ? undefined : Number.parseFloat(match[1])
   }
 
-  // Wide screen: sidebar 260, centre 2000 → gutter (2000-860)/2 = 570, capped at
-  // ART_MAX_WIDTH 420 + bleed, so she is height-capped by the viewport.
+  // The sizing constants, read from the bundle's own source rather than restated
+  // here. They are tuning knobs, and a test that hardcodes 420/150/860 goes stale
+  // the moment one is retuned — it then fails for the wrong reason, or worse, keeps
+  // passing against a number the component no longer uses. CARD_MAX_WIDTH matters
+  // for the same reason: it is what turns a centre-column width into a gutter.
+  const source = BUNDLE_SOURCE.match(/const (ART_MAX_WIDTH|ART_MIN_WIDTH|ART_BLEED|CARD_MAX_WIDTH) = (\d+)/g) ?? []
+  const tuning = Object.fromEntries(source.map((line) => {
+    const [, name, value] = /const (\w+) = (\d+)/.exec(line)
+    return [name, Number(value)]
+  }))
+  const { ART_MAX_WIDTH, ART_MIN_WIDTH, ART_BLEED, CARD_MAX_WIDTH } = tuning
+  checkTruthy('the bundle’s sizing constants were readable for the checks below',
+    ART_MAX_WIDTH !== undefined && ART_MIN_WIDTH !== undefined && ART_BLEED !== undefined
+    && CARD_MAX_WIDTH !== undefined, true)
+  // The dimming ratio divides by the width, so a design width at or below the
+  // legibility floor would pin every narrow frame to one flat opacity and make the
+  // overlap fade meaningless.
+  checkTruthy(`the design width leaves room above the legibility floor (${String(ART_MAX_WIDTH)} vs ${String(ART_MIN_WIDTH)})`,
+    ART_MAX_WIDTH > ART_MIN_WIDTH * 1.5, true)
+  // The card must be wider than she is, or she could never clear it.
+  checkTruthy(`the card is wider than her design width (${String(CARD_MAX_WIDTH)} vs ${String(ART_MAX_WIDTH)})`,
+    CARD_MAX_WIDTH > ART_MAX_WIDTH + ART_MIN_WIDTH, true)
+
+  // Wide screen: sidebar 260, centre 2000 → gutter (2000-860)/2 = 570, which is
+  // roomier than ART_MAX_WIDTH, so she is at her design size.
   const wide = renderBackdrop('mom', '260px 2000px 0px')
   checkTruthy('renders on a wide screen in a mom session', wide !== null)
   check('sits flush against the sidebar', styleOf(wide).left, '260px')
-  checkTruthy('uses the art as a background image', String(styleOf(wide).backgroundImage).startsWith('url("data:image/webp'))
+  // The URL the host half serves, not inline bytes: see the art section above.
+  checkTruthy('uses the served art as a background image',
+    String(styleOf(wide).backgroundImage) === `url("${String(path)}")`)
   check('carries the tuned transparency', styleOf(wide).opacity, '0.5')
   {
-    // Two regimes, and they behave differently on purpose.
-    //
-    // (a) GUTTER-BOUND: her width is the gutter plus the bleed, so she does reach
-    //     the card and the fade is what protects the text. Frame: centre 1260 →
-    //     gutter (1260-860)/2 = 200; a tall viewport keeps the height cap out of
-    //     the way, so she is 200+24 = 224 wide, solid to 200-90 = 110.
-    const gutterBound = renderBackdrop('mom', '260px 1260px 0px', 2000)
-    const mask = String(styleOf(gutterBound).maskImage)
-    checkTruthy('fade uses absolute stops, not percentages', /#000 \d+px, transparent \d+px/.test(mask))
-    checkTruthy('softening begins 90px before the card edge', mask.includes('#000 110px'))
-    checkTruthy('and she is fully gone at the bleed limit', mask.includes('transparent 224px'))
-    check('the bleed really is the overlap', Number.parseFloat(styleOf(gutterBound).width), 224)
+    // SIZE is top-driven. A roomy gutter does not make her bigger — she is already
+    // at ART_MAX_WIDTH — and a tall viewport does not make her smaller, because the
+    // cap is now 100vh: she may reach the top edge exactly and no further.
+    // A gutter roomier than she is (centre 1260 → gutter 200, already clear of her
+    // 280), so she is at design size and the only thing dimming her is that she
+    // still reaches past the card edge. Full strength needs her whole box clear.
+    const roomy = renderBackdrop('mom', '260px 1260px 0px', 2000)
+    const roomyGutter = (1260 - CARD_MAX_WIDTH) / 2
+    const roomyReaches = Math.min(ART_MAX_WIDTH, roomyGutter + ART_BLEED)
+    check('a roomy gutter leaves her at her design width',
+      Number.parseFloat(styleOf(roomy).width), ART_MAX_WIDTH)
+    check('and dims by the part that overlaps',
+      Number.parseFloat(styleOf(roomy).opacity), (0.5 * roomyReaches) / ART_MAX_WIDTH)
 
-    // (b) HEIGHT-BOUND: the viewport cap makes her narrower than the gutter, so
-    //     she never reaches the card and there is nothing to fade.
-    const heightBound = renderBackdrop('mom', '260px 2000px 0px', 1000)
-    const hbEnd = pxAfterTransparent(styleOf(heightBound).maskImage)
-    check('a height-bound figure ends inside the gutter', hbEnd, Number.parseFloat(styleOf(heightBound).width))
+    // The fade still starts 90px before the measured card edge, and ends at the
+    // text column.
+    const mask = String(styleOf(roomy).maskImage)
+    checkTruthy('fade uses absolute stops, not percentages', /#000 \d+px, transparent \d+px/.test(mask))
+    checkTruthy('softening begins 90px before the card edge',
+      mask.includes(`#000 ${String(Math.round(roomyGutter - 90))}px`))
+    // The ramp ends at the card's TEXT column, not at the far edge of her box. That
+    // is the safety property: alpha reaches zero exactly where prose begins, so
+    // holding her size costs nothing in readability.
+    check('the fade is complete by the card’s text column', pxAfterTransparent(mask), roomyReaches)
+    check('and that column is inside her box, not past it',
+      pxAfterTransparent(mask) <= Number.parseFloat(styleOf(roomy).width), true)
   }
   {
     const width = Number.parseFloat(styleOf(wide).width)
     const height = Number.parseFloat(styleOf(wide).height)
     const aspect = artMeta.width / artMeta.height
     checkTruthy(`aspect ratio preserved (${width.toFixed(0)}×${height.toFixed(0)})`, Math.abs(width / height - aspect) < 0.01)
-    checkTruthy('never taller than the viewport cap', height <= 1000 * 0.78 + 1)
+    // The cap is the parent's height, so this is "she reaches the top edge at most".
+    checkTruthy('never taller than the viewport', height <= 1000 + 1)
+  }
+
+  // The top is the only thing that shrinks her: she is pinned to the bottom, so
+  // height is the one dimension that can carry her past the top of her parent. She
+  // therefore holds her design size for every viewport at least as tall as that
+  // size, and only below that does she shrink with the window.
+  {
+    const aspect = artMeta.width / artMeta.height
+    const designHeight = artMeta.width === 0 ? 0 : Math.round(ART_MAX_WIDTH / aspect)
+    const atThreshold = renderBackdrop('mom', '260px 2000px 0px', designHeight)
+    const belowThreshold = renderBackdrop('mom', '260px 2000px 0px', designHeight - 120)
+    const tall = renderBackdrop('mom', '260px 2000px 0px', designHeight * 2)
+
+    // Exactly at the threshold she is full size AND exactly touching the top: the
+    // cap is `100vh`, not a viewport-proportional guess, so the two must agree.
+    check('at her own height she is full size', Number.parseFloat(styleOf(atThreshold).width), ART_MAX_WIDTH)
+    check('and reaches the top exactly, no higher',
+      Number.parseFloat(styleOf(atThreshold).height), designHeight)
+    // Below it she shrinks with the window rather than overflowing.
+    check('below that she shrinks with the window',
+      Number.parseFloat(styleOf(belowThreshold).width), Math.round((designHeight - 120) * aspect))
+    check('and still touches, never overflows',
+      Number.parseFloat(styleOf(belowThreshold).height), designHeight - 120)
+    // Above it nothing changes at all — this is the "don't shrink blindly" half.
+    check('a taller window leaves her untouched',
+      Number.parseFloat(styleOf(tall).width), ART_MAX_WIDTH)
+    checkTruthy('and never smaller than a short one',
+      Number.parseFloat(styleOf(tall).width) >= Number.parseFloat(styleOf(belowThreshold).width))
   }
 
   // The sidebar collapses: she must follow it, not stay put.
   const collapsed = renderBackdrop('mom', '56px 2000px 0px')
   check('follows a collapsed sidebar', styleOf(collapsed).left, '56px')
 
-  // Threshold: `gutter + ART_BLEED >= ART_MIN_WIDTH` → centre >= 1112, since
-  // gutter (1000-860)/2 = 70 gives 94px wide.
-  check('renders nothing when the gutter cannot fit her', renderBackdrop('mom', '260px 1000px 0px'), null)
-  check('one pixel under the threshold is still hidden', renderBackdrop('mom', '260px 1111px 0px'), null)
-  checkTruthy('and the threshold itself renders', renderBackdrop('mom', '260px 1112px 0px') !== null)
-  checkTruthy('a roomy gutter renders too', renderBackdrop('mom', '260px 1300px 0px') !== null)
+  // Narrow windows. Her SIZE no longer follows the gutter — only the top and the
+  // viewport do — so what a narrow gutter changes is how far she reaches over the
+  // card and how much she is dimmed by it. She used to vanish entirely below
+  // `gutter + ART_BLEED < ART_MIN_WIDTH`, which left the desktop app's DEFAULT 1280px
+  // window (an 80px gutter) with nothing at all.
+  {
+    // The desktop's own default window, named so the regression is recognisable.
+    // Gutter 80, so she overlaps and dims — but she is drawn at full design size.
+    const desktopDefault = renderBackdrop('mom', '260px 1020px 0px')
+    checkTruthy('the desktop default 1280px window draws her', desktopDefault !== null)
+    check('at full design size, not shrunk to its gutter',
+      Number.parseFloat(styleOf(desktopDefault).width), ART_MAX_WIDTH)
+    // Gutter 80 → 104px of her is clear, but ART_MIN_WIDTH (150) floors the ratio:
+    // below that reach she stops reading as a figure, so the dimming stops there
+    // rather than going all the way to invisible.
+    check('dimmed in proportion to the overlap, floored at the legibility width',
+      Number.parseFloat(styleOf(desktopDefault).opacity), (0.5 * ART_MIN_WIDTH) / ART_MAX_WIDTH)
+    // She reaches the card, so the mask is the only thing between her and the text —
+    // and it lands at zero on the text column (gutter 80 + bleed 24 = 104).
+    check('the fade zeroes her exactly at the text column, gutter plus bleed',
+      pxAfterTransparent(styleOf(desktopDefault).maskImage), 104)
+
+    // Monotonic in the one input that may shrink her: a shorter window.
+    const taller = renderBackdrop('mom', '260px 1020px 0px', 900)
+    const shorter = renderBackdrop('mom', '260px 1020px 0px', 700)
+    checkTruthy('a shorter window is never larger',
+      Number.parseFloat(styleOf(shorter).width) <= Number.parseFloat(styleOf(taller).width))
+    // Widening the window adds room beside the card, so she brightens and never
+    // dims — the gutter must not be able to trade her size for her presence.
+    // These two are chosen either side of the point where she just clears: 1360
+    // reaches 274 of her 280 (dimmed), 1372 reaches 280 (full).
+    const snug = renderBackdrop('mom', '260px 1020px 0px')
+    const almostClear = renderBackdrop('mom', '260px 1360px 0px')
+    const clearCentre = CARD_MAX_WIDTH + 2 * (ART_MAX_WIDTH - ART_BLEED)
+    const clearing = renderBackdrop('mom', `260px ${String(clearCentre)}px 0px`)
+    checkTruthy('a wider window is never fainter',
+      Number.parseFloat(styleOf(almostClear).opacity) >= Number.parseFloat(styleOf(snug).opacity))
+    check('and never smaller either',
+      Number.parseFloat(styleOf(snug).width), Number.parseFloat(styleOf(almostClear).width))
+    // One box short of clearing: gutter 250 reaches 274 of her 280.
+    check('a gutter that still falls short dims her',
+      Number.parseFloat(styleOf(almostClear).opacity),
+      (0.5 * ((1360 - CARD_MAX_WIDTH) / 2 + ART_BLEED)) / ART_MAX_WIDTH)
+    check('full strength the moment she clears the card',
+      Number.parseFloat(styleOf(clearing).opacity), 0.5)
+  }
+
+  // The one true zero: no gutter to stand in — the card fills the column, or the
+  // frame could not be read at all.
+  check('renders nothing when there is no gutter', renderBackdrop('mom', '260px 860px 0px'), null)
+  check('and nothing below the card width either', renderBackdrop('mom', '260px 400px 0px'), null)
 
   // A tight gutter must not keep her fully opaque right up to the card. With
   // gutter 126 the fade starts at 126-90 = 36, so she is soft across most of it.
